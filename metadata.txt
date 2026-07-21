@@ -1,0 +1,17 @@
+[general]
+name=PhaseOne Image Align
+qgisMinimumVersion=4.0
+qgisMaximumVersion=4.99
+description=Orthorectify and align a Phase One aerial image to a reference orthomosaic and DSM. Select input layers, an image folder, and a target point on the map canvas; the result is loaded as a virtual raster layer.
+version=0.1.0
+author=Paula Uzcategui Leon
+email=paula.uzcategui68@gmail.com
+about=This plugin wraps the closeup-ortho processing pipeline for Phase One cameras. Given a reference orthomosaic, a DSM, and a folder of geotagged Phase One images, it (1) finds the most-nadir image covering a user-selected target point, (2) orthorectifies it, (3) aligns it to the orthomosaic via SIFT feature matching, and (4) loads the result as a read-only virtual raster layer inside QGIS.
+tracker=https://github.com/traitlab/closeup-ortho/issues
+repository=https://github.com/traitlab/closeup-ortho
+tags=raster,orthomosaic,alignment,PhaseOne,drone
+homepage=https://github.com/traitlab/closeup-ortho
+category=Raster
+icon=icons/plugin.png
+experimental=True
+deprecated=False
