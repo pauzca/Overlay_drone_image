@@ -22,9 +22,11 @@ from .geometry import (
     geotiff_affine,
     intersect_boresight_with_dsm,
 )
-from .metadata import PhotoMeta, read_photo_meta_phaseone
+from .MetadataReader import PhotoMeta, BaseMetadataReader
 
 log = logging.getLogger(__name__)
+
+# FOR NOW THIS CODE WORKS FOR PHASE ONE IMAGES
 
 # Nadir tolerance (degrees of gimbal pitch/roll deviation from straight-down).
 _NADIR_WARN_DEG = 0.5
@@ -41,8 +43,8 @@ def _auto_buffer_radius(footprint_w_m: float, footprint_h_m: float) -> float:
     return diam / 2.0
 
 
-def _project_one_phaseone(meta: PhotoMeta, dsm: DSM, buffer_radius_m: float | None) -> dict | None:
-    """Run the planar projection for one Phase One photo. Returns a record dict, or None to skip."""
+def _project_one(meta: PhotoMeta, dsm: DSM, buffer_radius_m: float | None) -> dict | None:
+    """Run the planar projection for one Raw drone photo. Returns a record dict, or None to skip."""
     name = meta.path.name
 
     pitch_dev = abs(meta.pitch + 90.0)
@@ -190,13 +192,14 @@ def orthorectify_image(
     dsm_path,
     geotiff_path,
     buffer_radius_m: float | None = None,
+    metadata_reader=BaseMetadataReader,
 ) -> Path:
-    """Orthorectify a single Phase One image onto a DSM and write a GeoTIFF.
+    """Orthorectify a single Raw drone image onto a DSM and write a GeoTIFF.
 
     Parameters
     ----------
     image_path : str or Path
-        Path to the Phase One JPEG.
+        Path to the Raw drone image.
     dsm_path : str or Path
         Path to the DSM raster.
     geotiff_path : str or Path
@@ -206,8 +209,7 @@ def orthorectify_image(
 
     Returns
     -------
-    Path
-        Path to the written GeoTIFF.
+    Path to the written GeoTIFF.
 
     Raises
     ------
@@ -220,11 +222,11 @@ def orthorectify_image(
     with DSM(dsm_path) as dsm:
         log.info("DSM CRS: %s | resolution: %.4f m", dsm.crs, dsm.res_x)
 
-        meta = read_photo_meta_phaseone(image_path)
+        meta = metadata_reader.read(image_path)
         if meta is None:
-            raise RuntimeError(f"Missing Phase One metadata: {image_path.name}")
+            raise RuntimeError(f"Missing metadata: {image_path.name}")
 
-        result = _project_one_phaseone(meta, dsm, buffer_radius_m)
+        result = _project_one(meta, dsm, buffer_radius_m)
         if result is None:
             raise RuntimeError(f"Projection failed: {image_path.name}")
 

@@ -1,13 +1,16 @@
-"""Alignment dialog for the PhaseOne Image Align plugin.
+"""Alignment dialog for plugin.
 
 Provides:
 - QgsMapLayerComboBox for reference orthomosaic and DSM.
-- CSV file browser for the Phase One coordinates file.
-- Folder browser for the Phase One image directory.
+- Creates or Browses for the CVS of the coordinates of the images
+- Folder browser for the Drone flight image directory.
 - Map-canvas point picker that captures target_x / target_y.
 - Run button that executes the full pipeline and adds the result as a virtual
   raster layer.
 - Progress bar and status label for feedback.
+
+This whole plugin was created with the help of AI, adapted from code that ran on the command console
+
 """
 
 from __future__ import annotations
@@ -21,10 +24,12 @@ from qgis.core import (
     QgsProject,
     QgsRasterLayer,
 )
-from qgis.gui import QgsMapLayerComboBox, QgsMapToolEmitPoint
+from qgis.gui import QgsMapLayerComboBox, QgsMapToolEmitPoint, QgsProjectionSelectionWidget
 from qgis.core import QgsMapLayerProxyModel
 from qgis.PyQt.QtCore import Qt, QThread, pyqtSignal
+
 from qgis.PyQt.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -39,7 +44,21 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
 )
 
+from .drone_raw_utils.MetadataReader import BaseMetadataReader, DJIMetadataReader, PhaseOneMetadataReader
+
 log = logging.getLogger(__name__)
+
+# Registry matching the QComboBox UI selections
+READER_REGISTRY: dict[str, BaseMetadataReader] = {
+    "Phase One": PhaseOneMetadataReader(),
+    "DJI Mavic 3 Enterprise": DJIMetadataReader(),
+}
+
+
+def get_metadata_reader(drone_model_name: str) -> BaseMetadataReader:
+    """Returns the matching metadata reader, defaulting to Phase One if unmapped."""
+    return READER_REGISTRY.get(drone_model_name, PhaseOneMetadataReader())
+
 
 # ── Worker thread ─────────────────────────────────────────────────────────────
 
@@ -55,61 +74,79 @@ class AlignWorker(QThread):
         self,
         ortho_path: str,
         dsm_path: str,
-        csv_file: str,
         image_folder: str,
         target_x: float,
         target_y: float,
         epsg: str,
         output_path: str,
+        drone_model: str = "Phase One",
     ):
         super().__init__()
         self.ortho_path = ortho_path
         self.dsm_path = dsm_path
-        self.csv_file = csv_file
         self.image_folder = image_folder
         self.target_x = target_x
         self.target_y = target_y
         self.epsg = epsg
-        self.output_path = output_path
+        self.output_path = output_path,
+        self.drone_model = drone_model
 
     def run(self):
         """Execute the three-step pipeline."""
         try:
             # Import here to avoid polluting QGIS at plugin load time.
-            from .phaseone_image.find_phaseone import find_best_phaseone_image
-            from .phaseone_image.orthorectify import orthorectify_image
-            from .phaseone_image.align_aux import align_phaseone_to_ortho
+            from .drone_raw_utils.find_drone_image import find_best_raw_drone_image
+            from .drone_raw_utils.orthorectify import orthorectify_image
+            from .drone_raw_utils.align_aux import align_to_ortho
 
-            tmp_dir = tempfile.mkdtemp(prefix="phaseone_align_")
+            tmp_dir = tempfile.mkdtemp(prefix="raw_drone_align_")
+
+            
+            # set the reader of the raw images metadata based on the drone/camera model
+            reader = get_metadata_reader(self.drone_model)
+
+
+            # Steep 0 ── find or create the lookup csv file for the raw image coordinates ──────────────────────────────────────────────
+            csv_coordinate_path = os.path.join(self.image_folder, "coordinates",
+                                              "all_images_center_coordinates.csv")
+
+            if os.path.exists(csv_coordinate_path):
+                print("Loading precomputed coordinates")
+            else:
+                print("Creating coordinates file... The first time this can take a couple of minutes")
+                csv_coordinate_path = reader.extract_gps_to_csv(image_folder=self.image_folder, output_csv=csv_coordinate_path)
+
 
             # Step 1 – find the best image
-            self.progress.emit("Step 1/3 – Finding best Phase One image …")
-            img_path = find_best_phaseone_image(
+            self.progress.emit("Step 1/3 – Finding best Raw Drone image …")
+            img_path = find_best_raw_drone_image(
                 csv_file=self.csv_file,
                 image_folder=self.image_folder,
                 output_folder=tmp_dir,
                 target_x=self.target_x,
                 target_y=self.target_y,
                 epsg=self.epsg,
+                metadata_reader=reader,
             )
             
             img_name = os.path.splitext(os.path.basename(str(img_path)))[0]
-            print(f"Phaseone image {img_name}")
+            print(f"Drone image {img_name}")
 
-            # Step 2 – orthorectify
-            self.progress.emit("Step 2/3 – Orthorectifying image …")
+            # Step 2 – orthoproject
+            self.progress.emit("Step 2/3 – Projecting image …")
 
             geotiff_path = self.output_path.replace(".tif", "_temp.tif") #os.path.join(tmp_dir, img_name + ".tif")
             orthorectify_image(
                 image_path=img_path,
                 dsm_path=self.dsm_path,
                 geotiff_path=geotiff_path,
+                metadata_reader=reader
             )
 
             # Step 3 – align
-            self.progress.emit("Step 3/3 – Aligning to orthomosaic …")
-            align_phaseone_to_ortho(
-                phaseone_path=geotiff_path,
+            self.progress.emit("Step 3/3 – Aligning to reference orthomosaic …")
+            align_to_ortho(
+                orthorectified_path=geotiff_path,
                 ortho_path=self.ortho_path,
                 output_path=self.output_path,
                 crop_size=25,
@@ -124,8 +161,8 @@ class AlignWorker(QThread):
 # ── Dialog ────────────────────────────────────────────────────────────────────
 
 
-class PhaseOneAlignDialog(QDialog):
-    """Main user interface for the PhaseOne Image Align plugin."""
+class RawDroneAlignDialog(QDialog):
+    """Main user interface for the Raw Drone Image Align plugin."""
 
     def __init__(self, iface, parent=None):
         super().__init__(parent or iface.mainWindow())
@@ -136,7 +173,7 @@ class PhaseOneAlignDialog(QDialog):
         self._previous_tool = None
         self._worker: AlignWorker | None = None
 
-        self.setWindowTitle("PhaseOne Image Align")
+        self.setWindowTitle("Raw Image Align")
         self.setMinimumWidth(520)
         self._build_ui()
 
@@ -159,40 +196,50 @@ class PhaseOneAlignDialog(QDialog):
         self._dsm_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
         layer_form.addRow("Reference DSM:", self._dsm_combo)
 
+
         root.addWidget(layer_group)
 
-        # ── CSV file ──────────────────────────────────────────────
-        csv_group = QGroupBox("Phase One GPS Coordinates CSV")
-        csv_outer = QVBoxLayout(csv_group)
-        csv_note = QLabel(
-            "Auto-detected as <image_folder>/phaseone_coordinates.csv. "
-            "Override by browsing to a different file."
-        )
-        csv_note.setWordWrap(True)
-        csv_note.setStyleSheet("color: grey; font-size: 10px;")
-        csv_outer.addWidget(csv_note)
-        csv_layout = QHBoxLayout()
-        self._csv_edit = QLineEdit()
-        self._csv_edit.setPlaceholderText("Auto-filled when image folder is selected …")
-        csv_browse = QPushButton("Browse …")
-        csv_browse.clicked.connect(self._browse_csv)
-        #csv_layout.addWidget(self._csv_edit)
-        #csv_layout.addWidget(csv_browse)
-        #csv_outer.addLayout(csv_layout)
-        #root.addWidget(csv_group)
-
         # ── Image folder ──────────────────────────────────────────────
-        folder_group = QGroupBox("Phase One Image Folder")
+        folder_group = QGroupBox("Raw Drone Image Folder")
         folder_layout = QHBoxLayout(folder_group)
+        
         self._folder_edit = QLineEdit()
-        self._folder_edit.setPlaceholderText("Folder containing Phase One JPEGs …")
+        self._folder_edit.setPlaceholderText("Folder containing Raw Drone Images JPEGs …")
+        
         folder_browse = QPushButton("Browse …")
         folder_browse.clicked.connect(self._browse_folder)
-        #folder_layout.addWidget(self._folder_edit)
-        #folder_layout.addWidget(folder_browse)
+        
+        folder_layout.addWidget(self._folder_edit)
+        folder_layout.addWidget(folder_browse)
+        
         root.addWidget(folder_group)
 
+        # ── Drone Model ───────────────────────────────────────────────
+        drone_group = QGroupBox("Drone Information")
+        drone_layout = QHBoxLayout(drone_group)
+        
+        drone_label = QLabel("Drone Model/Camera:")
+        
+        # Option A: Dropdown with common models (editable if custom model is typed)
+        self._drone_model_combo = QComboBox()
+        self._drone_model_combo.setEditable(True)  # Allows typing custom models
+        self._drone_model_combo.addItems([
+            "DJI Mavic 3 Enterprise",
+            "Trinity",
+            "Phase One",
+            "Custom / Other"
+        ])
+        self._drone_model_combo.setPlaceholderText("Select or enter drone model …")
+        
+        drone_layout.addWidget(drone_label)
+        drone_layout.addWidget(self._drone_model_combo)
+        
+        root.addWidget(drone_group)
+
         # ── Target point ──────────────────────────────────────────────
+
+        self._crs_widget = QgsProjectionSelectionWidget()
+        self._crs_widget.setCrs(QgsProject.instance().crs())
         point_group = QGroupBox("Target Point (map CRS)")
         point_layout = QHBoxLayout(point_group)
 
@@ -248,26 +295,16 @@ class PhaseOneAlignDialog(QDialog):
     # Browse helpers
     # ------------------------------------------------------------------
 
-    def _browse_csv(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Phase One GPS CSV", "", "CSV files (*.csv);;All files (*)"
-        )
-        if path:
-            self._csv_edit.setText(path)
 
     def _browse_folder(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Phase One image folder")
-        if path:
-            self._folder_edit.setText(path)
-            # Auto-populate the CSV path if it hasn't been set manually
-            auto_csv = os.path.join(path, "phaseone_coordinates.csv")
-            if not self._csv_edit.text().strip():
-                self._csv_edit.setText(auto_csv)
-            elif self._csv_edit.text().strip() == os.path.join(
-                os.path.dirname(self._folder_edit.text()), "phaseone_coordinates.csv"
-            ):
-                # Update if it was previously auto-filled from a different folder
-                self._csv_edit.setText(auto_csv)
+            """Handler for browsing and selecting the image folder."""
+            folder = QFileDialog.getExistingDirectory(self, "Select Raw Drone Image Folder")
+            if folder:
+                self._folder_edit.setText(folder)
+
+    def get_drone_model(self) -> str:
+        """Helper to retrieve the selected or typed drone model."""
+        return self._drone_model_combo.currentText().strip()
 
     def _browse_output(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -321,10 +358,8 @@ class PhaseOneAlignDialog(QDialog):
             errors.append("• Select a Reference Orthomosaic layer.")
         if self._dsm_combo.currentLayer() is None:
             errors.append("• Select a Reference DSM layer.")
-        #if not self._csv_edit.text().strip():
-        #    errors.append("• Provide the Phase One GPS coordinates CSV file.")
-        #if not self._folder_edit.text().strip():
-        #    errors.append("• Provide the Phase One image folder.")
+        if not self._folder_edit.text().strip():
+            errors.append("• Provide the image folder.")
         if not self._x_edit.text().strip() or not self._y_edit.text().strip():
             errors.append("• Pick a target point on the map (or enter X/Y manually).")
         else:
@@ -357,15 +392,16 @@ class PhaseOneAlignDialog(QDialog):
         dsm_layer = self._dsm_combo.currentLayer()
         epsg = dsm_layer.crs().authid()  # e.g. "EPSG:32617"
 
+
         params = dict(
             ortho_path=self._ortho_combo.currentLayer().source(),
             dsm_path=dsm_layer.source(),
-            csv_file=  r"C:\Users\UzcateguiP\Documents\data_explore\closeup-ortho\src\phaseone_coordinates.csv",#self._csv_edit.text().strip(),
-            image_folder= r"F:\geotaggedImages\log_0440_Geotagged\P5 (80mm)", #self._folder_edit.text().strip(),
+            image_folder= r"/media/paula/data/geotaggedImages/log_0440_Geotagged/P5 (80mm)", #self._folder_edit.text().strip(),
             target_x=float(self._x_edit.text()),
             target_y=float(self._y_edit.text()),
             epsg=epsg,
-            output_path= r"D:\uzcateguipaula\test_geotagg\projected\Aligned\test.tif"#self._out_edit.text().strip(),
+            output_path= r"/home/paula/Documentos/overlay_drone/Aligned/test.tif",#self._out_edit.text().strip(),
+            drone_model=self.get_drone_model(),
         )
 
         # UI feedback
@@ -413,7 +449,7 @@ class PhaseOneAlignDialog(QDialog):
         self._progress.setVisible(False)
         self._run_btn.setEnabled(True)
         self._status_label.setText("✗ Processing failed — see error details.")
-        log.error("PhaseOne align failed:\n%s", error)
+        log.error("Orthorectified image align failed:\n%s", error)
         QMessageBox.critical(
             self,
             "Processing Error",

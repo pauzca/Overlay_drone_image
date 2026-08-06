@@ -1,24 +1,24 @@
-# PhaseOne Image Align — QGIS Plugin
+# Align Raw Drone Images — QGIS Plugin
 
-Orthorectify and align a Phase One aerial image to a reference orthomosaic and DSM directly inside QGIS.
+Orthorectify and align raw drone images to a reference orthomosaic and DSM directly inside QGIS.
 
 ---
 
 ## Folder Structure
 
 ```
-overlay_raw_drone_image/       ← Plugin root (install this whole folder)
-├─ __init__.py                 ← QGIS plugin entry point (classFactory)
+overlay_raw_drone_image/       ← Plugin root (install this whole folder in the QGIS plugins folder)
+├─ __init__.py                 ← QGIS plugin entry point 
 ├─ metadata.txt                ← Plugin metadata
 ├─ plugin.py                   ← Plugin class (toolbar / menu)
 ├─ dialog.py                   ← UI dialog
 ├─ icons/
 │   └─ plugin.png              ← Toolbar icon
-└─ phaseone_image/             ← Copied processing helpers
+└─ drone_raw_utils/            ← Helper functions to process the drone imagery
     ├─ __init__.py
     ├─ dsm.py                  ← DSM raster accessor
     ├─ geometry.py             ← Footprint & geotiff affine helpers
-    ├─ metadata.py             ← Phase One XMP / EXIF reader
+    ├─ metadata.py             ← Raw Drone Image XMP / EXIF reader
     ├─ orthorectify.py         ← Single-image orthorectification
     ├─ find_phaseone.py        ← Nearest-nadir image finder
     └─ align_aux.py            ← SIFT alignment to orthomosaic
@@ -30,11 +30,13 @@ overlay_raw_drone_image/       ← Plugin root (install this whole folder)
 
 1. **Copy the folder** `overlay_raw_drone_image` into your QGIS plugins directory:
    - Windows: `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\`
+
 2. **Install Python dependencies** (in the OSGeo4W shell or QGIS Python console):
    ```
    pip install geopandas pillow numpy scipy pyproj scikit-image opencv-python-headless affine shapely
    ```
-3. In QGIS, go to **Plugins → Manage and Install Plugins**, find **PhaseOne Image Align**, and enable it.
+
+3. In QGIS, go to **Plugins → Manage and Install Plugins**, find **Overlay Raw Drone Image**, and enable it.
 
 ---
 
@@ -44,8 +46,6 @@ overlay_raw_drone_image/       ← Plugin root (install this whole folder)
 2. Click the **PhaseOne Image Align** toolbar button (or use the Plugins menu).
 3. In the dialog:
    - Select the **Reference Orthomosaic** and **Reference DSM** layers.
-   - Browse to the **Phase One GPS coordinates CSV** (`phaseone_coordinates.csv`).
-     - Required columns: `filename`, `longitude`, `latitude`.
    - Browse to the **Phase One image folder** containing the raw JPEGs.
    - Click **"Pick point on map"** and click the target location in the canvas to set `target_x` / `target_y`, or type them manually.
    - Set the **output GeoTIFF path** for the aligned image.

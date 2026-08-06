@@ -1,17 +1,21 @@
-"""Main QGIS plugin class for PhaseOne Image Align.
+"""Main QGIS plugin class
 
 Registers a toolbar button and menu entry that open the alignment dialog.
 """
 
 import os
 
+from qgis.PyQt.QtWidgets import QMessageBox
+
 from qgis.PyQt.QtGui import QAction, QIcon
 
-from .dialog import PhaseOneAlignDialog
+from .drone_raw_utils.installer import ensure_plugin_dependencies
+
+from .dialog import RawDroneAlignDialog
 
 
-class PhaseOneImageAlignPlugin:
-    """QGIS plugin that provides the PhaseOne Image Align workflow."""
+class RawDroneImageAlignPlugin:
+    """QGIS plugin that provides the Drone Image Align workflow."""
 
     def __init__(self, iface):
         """Initialise the plugin.
@@ -26,6 +30,29 @@ class PhaseOneImageAlignPlugin:
         self._action = None
         self._dialog = None
 
+
+        REQUIRED = [
+            ("PIL", "Pillow"),
+            ("pandas", "pandas"),
+            ("skimage", "scikit-image"),
+            ("shapely", "Shapely"),
+            ("affine", "affine"),
+            ("scipy", "scipy"),
+            ("pyproj", "pyproj"),
+            ("cv2", "opencv-python")
+        ]
+
+        # Auto-install missing packages on plugin startup
+        installed = ensure_plugin_dependencies(REQUIRED)
+
+        if not installed:
+            QMessageBox.warning(
+                self.iface.mainWindow(),
+                "Dependency Warning",
+                "Some required Python packages could not be installed automatically. "
+                "Check QGIS Log Messages for details.",
+            )
+
     # ------------------------------------------------------------------
     # QGIS plugin life cycle
     # ------------------------------------------------------------------
@@ -35,19 +62,19 @@ class PhaseOneImageAlignPlugin:
         icon_path = os.path.join(self.plugin_dir, "icons", "plugin.png")
         self._action = QAction(
             QIcon(icon_path),
-            "PhaseOne Image Align",
+            "Raw Drone Image Align",
             self.iface.mainWindow(),
         )
-        self._action.setToolTip("Align a Phase One image to the reference orthomosaic")
+        self._action.setToolTip("Align a Raw Drone image to the reference orthomosaic")
         self._action.triggered.connect(self._open_dialog)
 
         # Add to Plugins menu and toolbar
-        self.iface.addPluginToMenu("PhaseOne Image Align", self._action)
+        self.iface.addPluginToMenu("Raw Drone Image Align", self._action)
         self.iface.addToolBarIcon(self._action)
 
     def unload(self):
         """Remove the plugin menu entry and toolbar icon."""
-        self.iface.removePluginMenu("PhaseOne Image Align", self._action)
+        self.iface.removePluginMenu("Raw Drone Image Align", self._action)
         self.iface.removeToolBarIcon(self._action)
         if self._dialog is not None:
             self._dialog.close()
@@ -60,7 +87,7 @@ class PhaseOneImageAlignPlugin:
     def _open_dialog(self):
         """Show the alignment dialog (create it on first call)."""
         if self._dialog is None:
-            self._dialog = PhaseOneAlignDialog(self.iface)
+            self._dialog = RawDroneAlignDialog(self.iface)
         self._dialog.show()
         self._dialog.raise_()
         self._dialog.activateWindow()

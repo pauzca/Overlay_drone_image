@@ -11,6 +11,10 @@ import pandas as pd
 from pyproj import Transformer
 from scipy.spatial import KDTree
 import xml.etree.ElementTree as ET
+from .MetadataReader import BaseMetadataReader
+
+
+## add the function to create the coordinates file
 
 
 def _build_image_tree(csv_file, epsg="EPSG:32617"):
@@ -41,61 +45,21 @@ def _find_closest_images(tree, df, x, y, n_images=30, radius=100):
     return results[:n_images]
 
 
-def _read_xmp_phaseone(path):
-    """Read Phase One XMP metadata."""
-    with open(path, "rb") as f:
-        data = f.read()
 
-    start = data.find(b"<x:xmpmeta")
-    end = data.find(b"</x:xmpmeta")
-
-    if start == -1 or end == -1:
-        return {}
-
-    end += len(b"</x:xmpmeta>")
-    root = ET.fromstring(data[start:end])
-
-    attrs = {}
-    for elem in root.iter():
-        for k, v in elem.attrib.items():
-            attrs[k.split("}")[-1]] = v
-        if elem.text and elem.text.strip():
-            attrs[elem.tag.split("}")[-1]] = elem.text.strip()
-
-    return attrs
-
-
-def _to_float_phaseone(value):
-    """Convert Phase One rational values to float."""
-    if value is None:
-        return None
-    value = str(value).strip()
-    try:
-        return float(value)
-    except ValueError:
-        pass
-    if "/" in value:
-        num, den = value.split("/")
-        return float(num) / float(den)
-    return None
-
-
-def _select_most_nadir(images, image_folder):
+def _select_most_nadir(images, image_folder, metadata_reader):
     """Select image with smallest deviation from nadir."""
     best = None
     best_dev = float("inf")
 
     for img in images:
-        xmp = _read_xmp_phaseone(Path(image_folder) / img["filename"])
 
-        pitch = _to_float_phaseone(xmp.get("Pitch"))
-        roll = _to_float_phaseone(xmp.get("Roll"))
+        photo_meta = metadata_reader.read(Path(image_folder) / img["filename"])
+
+        pitch = photo_meta.get("pitch")
+        roll = photo_meta.get("roll")
 
         if pitch is None or roll is None:
             continue
-
-        # Phase One pitch correction
-        pitch = pitch - 90
 
         pitch_dev = abs(pitch + 90)
         roll_dev = abs(roll)
@@ -110,7 +74,7 @@ def _select_most_nadir(images, image_folder):
     return best
 
 
-def find_best_phaseone_image(
+def find_best_raw_drone_image(
     csv_file,
     image_folder,
     output_folder,
@@ -119,8 +83,9 @@ def find_best_phaseone_image(
     epsg="EPSG:32617",
     n_images=5,
     radius=20,
+    metadata_reader=BaseMetadataReader,
 ) -> Path:
-    """Find and copy the best Phase One image for a target coordinate.
+    """Find and copy the best Raw Drone Image for a target coordinate.
 
     The selection process:
         1. Find closest images by GPS position.
@@ -157,9 +122,9 @@ def find_best_phaseone_image(
     candidates = _find_closest_images(tree, df, target_x, target_y, n_images, radius)
 
     if not candidates:
-        raise RuntimeError("No Phase One images found near target coordinate")
+        raise RuntimeError("No images found near target coordinate")
 
-    best = _select_most_nadir(candidates, image_folder)
+    best = _select_most_nadir(candidates, image_folder, metadata_reader)
     if best is None:
         raise RuntimeError("Could not determine nadir image")
 

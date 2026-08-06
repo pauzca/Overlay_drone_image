@@ -14,5 +14,5 @@ def classFactory(iface):  # noqa: N802  (QGIS naming convention)
     iface : QgisInterface
         Reference to the QGIS application interface.
     """
-    from .plugin import PhaseOneImageAlignPlugin
-    return PhaseOneImageAlignPlugin(iface)
+    from .plugin import RawDroneImageAlignPlugin
+    return RawDroneImageAlignPlugin(iface)

@@ -208,8 +208,8 @@ def to_uint8(arr):
 
 
 # ── Main alignment function ─────────────────────────────────────────────────────
-def align_phaseone_to_ortho(
-    phaseone_path,
+def align_to_ortho(
+    orthorectified_path,
     ortho_path,
     output_path,
     crop_size=25,
@@ -223,15 +223,15 @@ def align_phaseone_to_ortho(
 
     log = logging.getLogger(__name__)
 
-    center_x, center_y = get_raster_center(phaseone_path)
+    center_x, center_y = get_raster_center(orthorectified_path)
     print("Phase One centre: %.2f, %.2f", center_x, center_y)
 
     # 1. Crop matching regions
-    phase_crop, phase_transform, phase_profile = crop_square_fast(phaseone_path, center_x, center_y, crop_size)
+    phase_crop, phase_transform, phase_profile = crop_square_fast(orthorectified_path, center_x, center_y, crop_size)
     ortho_crop, ortho_transform, ortho_profile = crop_square_fast(ortho_path, center_x, center_y, crop_size)
 
     # 2. Resample Phase One to ortho grid
-    phase_ds = gdal.Open(str(phaseone_path))
+    phase_ds = gdal.Open(str(orthorectified_path))
     phase_crs = phase_ds.GetProjection()
     phase_ds = None
 
@@ -334,7 +334,7 @@ def align_phaseone_to_ortho(
         )
 
     # 7. Apply correction
-    src = gdal.Open(str(phaseone_path))
+    src = gdal.Open(str(orthorectified_path))
 
     orig_transform = src.GetGeoTransform()
 
