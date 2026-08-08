@@ -14,82 +14,63 @@ import cv2
 # ── Low-level utilities ─────────────────────────────────────────────────────────
 from osgeo import gdal
 import numpy as np
-from osgeo import gdal
-import numpy as np
 
-def crop_square_fast(input_raster, center_x, center_y, half, debug_save_path=None):
+def crop_square_fast(input_raster, center_x, center_y, half):
+    """
+    Crop a square region around center point.
+    half = size in METERS
+    """
     ds = gdal.Open(input_raster)
     if ds is None:
         raise FileNotFoundError(f"Could not open {input_raster}")
-        
+    
     try:
         gt = ds.GetGeoTransform()
         raster_width = ds.RasterXSize
         raster_height = ds.RasterYSize
         
-        # 1. Invert the geotransform to convert Map (X, Y) -> Pixel (Col, Row)
+        # Get pixel size
+        pixel_size_x = abs(gt[1])
+        pixel_size_y = abs(gt[5])
+        pixel_size = max(pixel_size_x, pixel_size_y)  # Use the larger, or average
+        
+        # Convert half (meters) to pixels
+        half_pixels = int(half / pixel_size)
+        
+        # Get center pixel location
         inv_gt = gdal.InvGeoTransform(gt)
         if not inv_gt:
             raise RuntimeError("Could not invert the raster's geotransform matrix.")
-            
-        # 2. Define the true square bounding box in MAP UNITS (meters)
-        # 20m above, below, left, right from the center coordinate
-        map_min_x = center_x - half
-        map_max_x = center_x + half
-        map_min_y = center_y - half
-        map_max_y = center_y + half
         
-        # 3. Convert all 4 corners of the map bounding box into pixel coordinates
-        def map_to_pixel(mx, my):
-            c = int(inv_gt[0] + mx * inv_gt[1] + my * inv_gt[2])
-            r = int(inv_gt[3] + mx * inv_gt[4] + my * inv_gt[5])
-            return c, r
-
-        c1, r1 = map_to_pixel(map_min_x, map_min_y)
-        c2, r2 = map_to_pixel(map_min_x, map_max_y)
-        c3, r3 = map_to_pixel(map_max_x, map_min_y)
-        c4, r4 = map_to_pixel(map_max_x, map_max_y)
+        # Convert center coordinates to pixel (row, col)
+        col = int(inv_gt[0] + center_x * inv_gt[1] + center_y * inv_gt[2])
+        row = int(inv_gt[3] + center_x * inv_gt[4] + center_y * inv_gt[5])
         
-        # Find the min/max pixel extent needed to cover this map region
-        cols = [c1, c2, c3, c4]
-        rows = [r1, r2, r3, r4]
+        # Define window (same as rasterio version)
+        min_col = max(0, col - half_pixels)
+        max_col = min(raster_width, col + half_pixels)
+        min_row = max(0, row - half_pixels)
+        max_row = min(raster_height, row + half_pixels)
         
-        min_col, max_col = min(cols), max(cols)
-        min_row, max_row = min(rows), max(rows)
-        
-        # 4. Define pixel offsets and sizes based on bounds
         x_offset = min_col
         y_offset = min_row
         x_size = max_col - min_col
         y_size = max_row - min_row
         
-        # 5. Clip boundaries to stay safely inside the image dimensions
-        if x_offset < 0:
-            x_size = max(0, x_size + x_offset)
-            x_offset = 0
-        if y_offset < 0:
-            y_size = max(0, y_size + y_offset)
-            y_offset = 0
-            
-        if x_offset + x_size > raster_width:
-            x_size = max(0, raster_width - x_offset)
-        if y_offset + y_size > raster_height:
-            y_size = max(0, raster_height - y_offset)
-            
         if x_size <= 0 or y_size <= 0:
             raise ValueError("The requested crop window falls entirely outside the image bounds.")
-
-        # Read the pixel data matching the calculated bounding box
+        
+        # Read the pixel data
         data = ds.ReadAsArray(x_offset, y_offset, x_size, y_size)
         
-        # 6. Recompute the correct top-left origin based on the pixel offset shift
+        # Recompute the top-left origin based on the pixel offset shift
         new_top_left_x = gt[0] + (x_offset * gt[1]) + (y_offset * gt[2])
         new_top_left_y = gt[3] + (x_offset * gt[4]) + (y_offset * gt[5])
         new_transform = (new_top_left_x, gt[1], gt[2], new_top_left_y, gt[4], gt[5])
         
         src_band = ds.GetRasterBand(1)
         gdal_dtype = src_band.DataType
-
+        
         profile = {
             'driver': ds.GetDriver().ShortName,
             'height': y_size,
@@ -99,24 +80,6 @@ def crop_square_fast(input_raster, center_x, center_y, half, debug_save_path=Non
             'crs': ds.GetProjection(),
             'transform': new_transform
         }
-
-        # DEBUG SAVE STEP
-        if debug_save_path:
-            tiff_driver = gdal.GetDriverByName("GTiff")
-            out_ds = tiff_driver.Create(str(debug_save_path), x_size, y_size, ds.RasterCount, gdal_dtype)
-            if out_ds is None:
-                raise RuntimeError(f"Failed to create debug file at {debug_save_path}")
-            
-            out_ds.SetGeoTransform(new_transform)
-            out_ds.SetProjection(ds.GetProjection())
-            
-            if ds.RasterCount == 1:
-                out_ds.GetRasterBand(1).WriteArray(data)
-            else:
-                for band_idx in range(ds.RasterCount):
-                    out_ds.GetRasterBand(band_idx + 1).WriteArray(data[band_idx])
-            out_ds = None
-            print(f"[DEBUG] Successfully saved center-cropped preview to: {debug_save_path}")
         
     finally:
         ds = None
@@ -209,7 +172,7 @@ def to_uint8(arr):
 
 # ── Main alignment function ─────────────────────────────────────────────────────
 def align_to_ortho(
-    orthorectified_path,
+    orthoprojected_path,
     ortho_path,
     output_path,
     crop_size=25,
@@ -223,37 +186,37 @@ def align_to_ortho(
 
     log = logging.getLogger(__name__)
 
-    center_x, center_y = get_raster_center(orthorectified_path)
-    print("Phase One centre: %.2f, %.2f", center_x, center_y)
+    center_x, center_y = get_raster_center(orthoprojected_path)
+    print("Raw image center: %.2f, %.2f", center_x, center_y)
 
     # 1. Crop matching regions
-    phase_crop, phase_transform, phase_profile = crop_square_fast(orthorectified_path, center_x, center_y, crop_size)
+    projected_crop, projected_transform, projected_profile = crop_square_fast(orthoprojected_path, center_x, center_y, crop_size)
     ortho_crop, ortho_transform, ortho_profile = crop_square_fast(ortho_path, center_x, center_y, crop_size)
 
     # 2. Resample Phase One to ortho grid
-    phase_ds = gdal.Open(str(orthorectified_path))
-    phase_crs = phase_ds.GetProjection()
-    phase_ds = None
+    projected_ds = gdal.Open(str(orthoprojected_path))
+    projected_crs = projected_ds.GetProjection()
+    projected_ds = None
 
-    phase_resampled = resample_to_reference(phase_crop,phase_transform,phase_crs,ortho_profile)
+    projected_resampled = resample_to_reference(projected_crop,projected_transform,projected_crs,ortho_profile)
 
     # 3. Grayscale
-    phase_gray = raster_to_grayscale(phase_resampled)
+    projected_gray = raster_to_grayscale(projected_resampled)
     ortho_gray = raster_to_grayscale(ortho_crop)
 
-    phase = phase_gray
+    projected = projected_gray
 
     if do_histogram_matching:
-        phase = match_histograms(phase_gray, ortho_gray)
+        projected = match_histograms(projected, ortho_gray)
 
     # 4. Blur
-    phase = cv2.GaussianBlur(phase, (21, 21), 0)
+    projected = cv2.GaussianBlur(projected, (21, 21), 0)
     ortho = cv2.GaussianBlur(ortho_gray, (21, 21), 0)
 
     # 5. SIFT + BF matching
     sift = cv2.SIFT_create()
 
-    kp1, des1 = sift.detectAndCompute(to_uint8(phase), None)
+    kp1, des1 = sift.detectAndCompute(to_uint8(projected), None)
     kp2, des2 = sift.detectAndCompute(to_uint8(ortho), None)
 
     if des1 is None or des2 is None:
@@ -334,18 +297,23 @@ def align_to_ortho(
         )
 
     # 7. Apply correction
-    src = gdal.Open(str(orthorectified_path))
+    src = gdal.Open(str(orthoprojected_path))
 
     orig_transform = src.GetGeoTransform()
 
+    
     T_orig = Affine(
         orig_transform[1],orig_transform[2],orig_transform[0],
         orig_transform[4],orig_transform[5],orig_transform[3],
     )
 
+    print(T_orig)
+
     G = Affine(ortho_transform[1],ortho_transform[2],ortho_transform[0],
         ortho_transform[4],ortho_transform[5],ortho_transform[3],
     )
+    print(G)
+    print(M_affine)
 
     T_correction = G * M_affine * (~G)
     T_new = T_correction * T_orig
@@ -353,39 +321,12 @@ def align_to_ortho(
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)),exist_ok=True)
 
-    driver = gdal.GetDriverByName("GTiff")
-
-    cog_options = [
-    "COMPRESS=DEFLATE",
-    "BIGTIFF=IF_SAFER",
-    "TILED=YES",               # Crucial for COG layout optimization
-    "BLOCKXSIZE=512",          # Standard web-optimized block width
-    "BLOCKYSIZE=512",          # Standard web-optimized block height
-    "PREDICTOR=2",             # Optimizes compression ratio for continuous/RGB values
-    "NUM_THREADS=ALL_CPUS"     # Spreads compression load across all available cores
-    ]
-    
-    out = driver.Create(
-        str(output_path),
-        src.RasterXSize,
-        src.RasterYSize,
-        src.RasterCount,
-        src.GetRasterBand(1).DataType,
-        options=cog_options
-    )
-
     out_transform = (T_new.c,T_new.a,T_new.b,T_new.f,T_new.d,T_new.e,)
 
-    out.SetGeoTransform(out_transform)
-    out.SetProjection(src.GetProjection())
-
-    for i in range(1, src.RasterCount + 1):
-        out.GetRasterBand(i).WriteArray(src.GetRasterBand(i).ReadAsArray())
-
-    out.FlushCache()
+    create_cog_directly_from_memory(src=src, output_path=output_path, 
+                                    transform=out_transform, projection=src.GetProjection())
 
     src = None
-    out = None
 
     log.info("Aligned raster written to %s", output_path)
 
@@ -397,3 +338,58 @@ def align_to_ortho(
         "median_error": median_error,
         "scale": scale,
     }
+
+
+import os
+
+
+def create_cog_directly_from_memory(src, output_path, transform, projection):
+    """Create COG directly from memory dataset without intermediate file."""
+    
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    
+    # Create an in-memory dataset with the correct transform
+    mem_driver = gdal.GetDriverByName("MEM")
+    mem_ds = mem_driver.Create(
+        "",
+        src.RasterXSize,
+        src.RasterYSize,
+        src.RasterCount,
+        src.GetRasterBand(1).DataType
+    )
+    
+    # Set transform and projection
+    mem_ds.SetGeoTransform(transform)
+    mem_ds.SetProjection(projection)
+    
+    # Copy data from source to memory dataset
+    for i in range(1, src.RasterCount + 1):
+        data = src.GetRasterBand(i).ReadAsArray()
+        mem_ds.GetRasterBand(i).WriteArray(data)
+    
+    # Create COG directly from memory dataset
+    cog_driver = gdal.GetDriverByName("COG")
+    cog_options = [
+        "COMPRESS=JPEG",
+        "QUALITY=90",
+        "BLOCKSIZE=512",
+        "OVERVIEWS=AUTO",
+        "NUM_THREADS=ALL_CPUS"
+    ]
+    
+    # Create COG - this writes directly to disk, no intermediate file needed
+    out = cog_driver.CreateCopy(
+        str(output_path),
+        mem_ds,
+        options=cog_options
+    )
+    
+    # Clean up
+    out = None
+    mem_ds = None
+    src = None
+    
+    print("COG raster written directly to %s", output_path)
+    
+    return output_path

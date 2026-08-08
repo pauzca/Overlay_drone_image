@@ -53,8 +53,7 @@ class BaseMetadataReader(abc.ABC):
             rows = []
             for img_path in image_files:
                 # QgsExifTools.getGeoTag returns a QgsPointXY (X=Longitude, Y=Latitude)
-                point = QgsExifTools.getGeoTag(str(img_path))
-                
+                point, check = QgsExifTools.getGeoTag(str(img_path))
                 # Check if point is valid and non-empty
                 if not point.isEmpty():
                     rows.append({

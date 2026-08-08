@@ -88,7 +88,7 @@ class AlignWorker(QThread):
         self.target_x = target_x
         self.target_y = target_y
         self.epsg = epsg
-        self.output_path = output_path,
+        self.output_path = output_path
         self.drone_model = drone_model
 
     def run(self):
@@ -120,7 +120,7 @@ class AlignWorker(QThread):
             # Step 1 – find the best image
             self.progress.emit("Step 1/3 – Finding best Raw Drone image …")
             img_path = find_best_raw_drone_image(
-                csv_file=self.csv_file,
+                csv_file=csv_coordinate_path,
                 image_folder=self.image_folder,
                 output_folder=tmp_dir,
                 target_x=self.target_x,
@@ -146,7 +146,7 @@ class AlignWorker(QThread):
             # Step 3 – align
             self.progress.emit("Step 3/3 – Aligning to reference orthomosaic …")
             align_to_ortho(
-                orthorectified_path=geotiff_path,
+                orthoprojected_path=geotiff_path,
                 ortho_path=self.ortho_path,
                 output_path=self.output_path,
                 crop_size=25,
@@ -396,11 +396,11 @@ class RawDroneAlignDialog(QDialog):
         params = dict(
             ortho_path=self._ortho_combo.currentLayer().source(),
             dsm_path=dsm_layer.source(),
-            image_folder= r"/media/paula/data/geotaggedImages/log_0440_Geotagged/P5 (80mm)", #self._folder_edit.text().strip(),
+            image_folder= self._folder_edit.text().strip(), #r"/media/paula/data/geotaggedImages/log_0440_Geotagged/P5 (80mm)", 
             target_x=float(self._x_edit.text()),
             target_y=float(self._y_edit.text()),
             epsg=epsg,
-            output_path= r"/home/paula/Documentos/overlay_drone/Aligned/test.tif",#self._out_edit.text().strip(),
+            output_path=r"/home/paula/Documentos/overlay_drone/Aligned/test.cog.tif",#self._out_edit.text().strip(),
             drone_model=self.get_drone_model(),
         )
 

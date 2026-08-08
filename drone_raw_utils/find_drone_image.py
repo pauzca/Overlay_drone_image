@@ -21,12 +21,15 @@ def _build_image_tree(csv_file, epsg="EPSG:32617"):
     """Read image GPS CSV and build spatial index."""
     df = pd.read_csv(csv_file)
 
+    print(csv_file)
+
     transformer = Transformer.from_crs("EPSG:4326", epsg, always_xy=True)
     xs, ys = transformer.transform(df["longitude"].values, df["latitude"].values)
 
     df["x"] = xs
     df["y"] = ys
 
+    print(df.head())
     tree = KDTree(list(zip(xs, ys)))
     return tree, df
 
@@ -55,8 +58,8 @@ def _select_most_nadir(images, image_folder, metadata_reader):
 
         photo_meta = metadata_reader.read(Path(image_folder) / img["filename"])
 
-        pitch = photo_meta.get("pitch")
-        roll = photo_meta.get("roll")
+        pitch = photo_meta.pitch
+        roll = photo_meta.roll
 
         if pitch is None or roll is None:
             continue
