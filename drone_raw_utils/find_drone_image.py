@@ -11,10 +11,23 @@ import pandas as pd
 from pyproj import Transformer
 from scipy.spatial import KDTree
 import xml.etree.ElementTree as ET
-from .MetadataReader import BaseMetadataReader
+from .metadata import Basemetadata, DJImetadata, PhaseOnemetadata, TrinityMetadata
 
 
 ## add the function to create the coordinates file
+
+# Registry matching the QComboBox UI selections
+READER_REGISTRY: dict[str, Basemetadata] = {
+    "Phase One": PhaseOnemetadata(),
+    "DJI Mavic 3": DJImetadata(),
+    "Trinity": TrinityMetadata(),
+}
+
+
+def get_metadata_reader(drone_model_name: str) -> Basemetadata:
+    """Returns the matching metadata reader, defaulting to Phase One if unmapped."""
+    return READER_REGISTRY.get(drone_model_name, PhaseOnemetadata())
+
 
 
 def _build_image_tree(csv_file, epsg="EPSG:32617"):
@@ -57,7 +70,7 @@ def _select_most_nadir(images, image_folder, metadata_reader):
     for img in images:
 
         photo_meta = metadata_reader.read(Path(image_folder) / img["filename"])
-
+        print(photo_meta)
         pitch = photo_meta.pitch
         roll = photo_meta.roll
 
@@ -80,21 +93,20 @@ def _select_most_nadir(images, image_folder, metadata_reader):
 def find_best_raw_drone_image(
     csv_file,
     image_folder,
-    output_folder,
     target_x,
     target_y,
     epsg="EPSG:32617",
     n_images=5,
     radius=20,
-    metadata_reader=BaseMetadataReader,
+    metadata_reader=Basemetadata,
 ) -> Path:
-    """Find and copy the best Raw Drone Image for a target coordinate.
+    """Find the best Raw Drone Image for a target coordinate.
 
     The selection process:
         1. Find closest images by GPS position.
         2. Check camera pitch/roll.
         3. Select image closest to nadir.
-        4. Copy image to output folder.
+        4. Return the path to the original image.
 
     Parameters
     ----------
@@ -102,12 +114,11 @@ def find_best_raw_drone_image(
         CSV with columns ``filename``, ``longitude``, ``latitude``.
     image_folder : str or Path
         Folder containing the Phase One JPEG images.
-    output_folder : str or Path
-        Destination folder for the copied image.
     target_x, target_y : float
         Target coordinate in the CRS defined by ``epsg``.
     epsg : str
-        EPSG code of the projected CRS for spatial search (default: EPSG:32617).
+        EPSG code of the projected CRS for spatial search
+        (default: EPSG:32617).
     n_images : int
         Maximum number of candidate images to evaluate.
     radius : float
@@ -116,25 +127,26 @@ def find_best_raw_drone_image(
     Returns
     -------
     Path
-        Path to the copied JPEG in ``output_folder``.
+        Path to the selected JPEG in ``image_folder``.
     """
     image_folder = Path(image_folder)
-    output_folder = Path(output_folder)
 
     tree, df = _build_image_tree(csv_file, epsg)
-    candidates = _find_closest_images(tree, df, target_x, target_y, n_images, radius)
+    candidates = _find_closest_images(
+        tree, df, target_x, target_y, n_images, radius
+    )
 
     if not candidates:
         raise RuntimeError("No images found near target coordinate")
 
-    best = _select_most_nadir(candidates, image_folder, metadata_reader)
+    best = _select_most_nadir(
+        candidates, image_folder, metadata_reader
+    )
+
     if best is None:
         raise RuntimeError("Could not determine nadir image")
 
-    output_folder.mkdir(parents=True, exist_ok=True)
+    image_path = image_folder / best["filename"]
 
-    src = image_folder / best["filename"]
-    dst = output_folder / best["filename"]
-    shutil.copy2(src, dst)
+    return image_path
 
-    return dst

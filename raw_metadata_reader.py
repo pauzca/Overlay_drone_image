@@ -1,102 +1,169 @@
+"""
+
+Read metadat of image setting custom fields
+DOES NOT REQUIRE QGIS library
+
+It uses the systems exiftool
+
+"""
+
 from __future__ import annotations
 
-import abc
-import re
-import xml.etree.ElementTree as ET
-from pathlib import Path
-from PIL import ExifTags, Image
+import subprocess
 import csv
-import shutil
+import json
+import re
+from pathlib import Path
 
-from qgis.core import QgsExifTools
+from PIL import ExifTags, Image
+from dataclasses import dataclass
 
-from .PhotoMeta import PhotoMeta
+import xml.etree.ElementTree as ET
 
+
+from drone_raw_utils.PhotoMeta import PhotoMeta
+
+# DJI normally stores the XMP packet near the beginning of the JPEG.
 _XMP_SCAN_BYTES = 262144
-_ATTR_RE = re.compile(rb'drone-dji:(\w+)\s*=\s*"([^"]*)"')
+
+# Extract attributes such as:
+#
+# drone-dji:GpsLatitude="+9.12345"
+# drone-dji:GimbalPitchDegree="-89.9"
+#
+_ATTR_RE = re.compile(
+    rb'drone-dji:(\w+)\s*=\s*"([^"]*)"'
+)
 
 
 
+class CustomMetadataReader:
+    """Read Trinity/Sony metadata using ExifTool."""
 
-class Basemetadata(abc.ABC):
-    """Abstract base class for drone metadata readers."""
-
-    @abc.abstractmethod
     def read(self, path: Path | str) -> PhotoMeta | None:
-        """Parse metadata from file and return a standardized PhotoMeta instance."""
-        pass
-    
-    def extract_gps_to_csv(self, image_folder: Path | str, output_csv: Path | str) -> str:
-            """Batch extract GPS coordinates using native QGIS QgsExifTools."""
-            image_folder = Path(image_folder)
-            output_csv = Path(output_csv)
-            output_csv.parent.mkdir(parents=True, exist_ok=True)
+        """Read projection-relevant metadata from a Trinity/Sony image."""
 
-            image_files = sorted(
-                [p for p in image_folder.iterdir() if p.suffix.lower() in (".jpg", ".jpeg")]
+        path = Path(path)
+
+        # ----------------------------------------------------------
+        # Read metadata using ExifTool
+        # ----------------------------------------------------------
+        meta = self._read_exiftool(path)
+
+        lat = self._to_float(meta.get("GPSLatitude"))
+        lon = self._to_float(meta.get("GPSLongitude"))
+        abs_alt = self._to_float(meta.get("GPSAltitude"))
+
+        yaw = self._to_float(meta.get("Yaw"))
+        pitch = self._to_float(meta.get("Pitch"))
+        roll = self._to_float(meta.get("Roll"))
+
+        # ----------------------------------------------------------
+        # Validate required GPS and orientation metadata
+        # ----------------------------------------------------------
+        required_metadata = {
+            "GPSLatitude": lat,
+            "GPSLongitude": lon,
+            "GPSAltitude": abs_alt,
+            "Yaw": yaw,
+            "Pitch": pitch,
+            "Roll": roll,
+        }
+
+        missing = [
+            name
+            for name, value in required_metadata.items()
+            if value is None
+        ]
+
+        if missing:
+            raise ValueError(
+                f"Cannot read required metadata from image:\n"
+                f"  File: {path}\n"
+                f"  Missing: {', '.join(missing)}\n"
+                f"  Required fields: {', '.join(required_metadata)}"
             )
 
-            rows = []
-            for img_path in image_files:
-                # QgsExifTools.getGeoTag returns a QgsPointXY (X=Longitude, Y=Latitude)
-                point, check = QgsExifTools.getGeoTag(str(img_path))
-                # Check if point is valid and non-empty
-                if not point.isEmpty():
-                    rows.append({
-                        "filename": img_path.name,
-                        "latitude": point.y(),   # Y is Latitude
-                        "longitude": point.x(),  # X is Longitude
-                    })
 
-            with open(output_csv, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["filename", "latitude", "longitude"])
-                writer.writeheader()
-                writer.writerows(rows)
+        # ----------------------------------------------------------
+        # Trinity pitch convention
+        # ----------------------------------------------------------
+        # ONLY keep this if you have verified that Trinity uses:
+        #
+        #     0 degrees = nadir
+        #
+        # while your projection code expects:
+        #
+        #    -90 degrees = nadir
+        #
+        pitch = pitch - 90.0
 
-            print("Extracted %d coordinates to %s using QgsExifTools", len(rows), output_csv)
-            return str(output_csv)
+        # ----------------------------------------------------------
+        # Camera information
+        # ----------------------------------------------------------
+        make = meta.get("Make")
+        model = meta.get("Model")
 
-## CUSTOM DRONE METADATA READERS (e.g., Phase One, DJI) IMPLEMENTED BELOW
+        if make is None or model is None:
+            raise ValueError(
+                f"Missing camera make/model in {path}"
+            )
 
-# ── Phase One Reader ──────────────────────────────────────────────────────────
+        camera = "wide"
 
-class PhaseOnemetadata(Basemetadata):
-    """Reads EXIF + XMP metadata for Phase One cameras."""
+        # ----------------------------------------------------------
+        # Image dimensions
+        # ----------------------------------------------------------
+        # ExifTool already provides these, so Pillow is not strictly
+        # necessary for width/height.
+        width_px = meta.get("ImageWidth")
+        height_px = meta.get("ImageHeight")
 
-    def read(self, path: Path | str) -> PhotoMeta | None:
-        path = Path(path)
-        xmp = self._read_xmp(path)
+        if width_px is None or height_px is None:
+            # Fallback to Pillow if ExifTool did not return dimensions.
+            with Image.open(path) as im:
+                width_px, height_px = im.size
 
-        lat = self._parse_gps(xmp.get("GPSLatitude"))
-        lon = self._parse_gps(xmp.get("GPSLongitude"))
-        abs_alt = self._to_float(xmp.get("GPSAltitude"))
+        # ----------------------------------------------------------
+        # Focal length
+        # ----------------------------------------------------------
+        # Trinity/Sony metadata contains FocalLengthIn35mmFormat.
+        fl35_mm = self._to_float(
+            meta.get("FocalLengthIn35mmFormat")
+        )
 
-        yaw = self._to_float(xmp.get("Yaw"))
-        pitch = self._to_float(xmp.get("Pitch"))
-        roll = self._to_float(xmp.get("Roll"))
+        # If it isn't available, try the normal focal length.
+        if fl35_mm is None:
+            fl35_mm = self._to_float(
+                meta.get("FocalLength")
+            )
 
-        if pitch is None or None in (lat, lon, abs_alt, yaw, roll):
-            return None
+        # Sony DSC-RX1RM2 sensor dimensions
+        SENSOR_WIDTH_MM = 35.9
 
-        # phase one pitch correction
-        pitch = pitch - 90  # Convert to nadir convention
+        focal_length_mm = self._to_float(
+            meta.get("FocalLength")
+        )
 
-        calib_focal = self._to_float(xmp.get("DIST_F"))
-        if calib_focal is None:
-            return None
+        if focal_length_mm is None:
+            raise ValueError(
+                f"Missing focal length in {path}"
+            )
 
-        with Image.open(path) as im:
-            width_px, height_px = im.size
-            exif = im.getexif()
-            exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+        calib_focal = (
+            focal_length_mm
+            * float(width_px)
+            / SENSOR_WIDTH_MM
+        )
 
-        fl35 = exif_ifd.get(0xA405)
-        fl35_mm = float(fl35) if fl35 is not None else None
-        timestamp = exif_ifd.get(0x9003)
+        # ----------------------------------------------------------
+        # Timestamp
+        # ----------------------------------------------------------
+        timestamp = meta.get("DateTimeOriginal")
 
         return PhotoMeta(
             path=path,
-            camera="wide",
+            camera=camera,
             latitude=lat,
             longitude=lon,
             abs_alt_m=abs_alt,
@@ -110,6 +177,66 @@ class PhaseOnemetadata(Basemetadata):
             timestamp=timestamp,
         )
 
+    @staticmethod
+    def _read_exiftool(path: Path) -> dict:
+        """Read the required metadata from an image using ExifTool."""
+
+        cmd = [
+            "exiftool",
+            "-json",
+            "-n",
+
+            "-GPSLatitude",
+            "-GPSLongitude",
+            "-GPSAltitude",
+
+            "-Pitch",
+            "-Roll",
+            "-Yaw",
+
+            "-Make",
+            "-Model",
+
+            "-ImageWidth",
+            "-ImageHeight",
+
+            "-FocalLength",
+            "-FocalLengthIn35mmFormat",
+
+            "-DateTimeOriginal",
+
+            str(path),
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        metadata = json.loads(result.stdout)
+
+        if not metadata:
+            raise ValueError(
+                f"ExifTool returned no metadata for {path}"
+            )
+
+        return metadata[0]
+
+    @staticmethod
+    def _to_float(value) -> float | None:
+        """Convert an ExifTool numeric value to float."""
+
+        if value is None or value == "":
+            return None
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    
     def _read_xmp(self, path: Path) -> dict:
         with open(path, "rb") as f:
             data = f.read()
@@ -158,9 +285,76 @@ class PhaseOnemetadata(Basemetadata):
             return None
 
 
-# ── DJI Reader ────────────────────────────────────────────────────────────────
+    def extract_gps_to_csv(self, image_folder: Path | str, output_csv: Path | str) -> str:
+        image_folder = Path(image_folder)
 
-class DJImetadata(Basemetadata):
+        cmd = [
+            r"exiftool",
+            "-fast2",
+            "-json",
+            "-n",
+            "-GPSLatitude",
+            "-GPSLongitude",
+            "-FileName",
+            str(image_folder)
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True
+        )
+
+        metadata = json.loads(result.stdout)
+
+        rows = []
+
+        for img in metadata:
+
+            if (
+                "GPSLatitude" not in img
+                or "GPSLongitude" not in img
+            ):
+                continue
+
+            lat = (
+                img["GPSLatitude"]
+            )
+
+            lon = (
+                img["GPSLongitude"]
+            )
+
+            rows.append(
+                {
+                    "filename": img["FileName"],
+                    "latitude": lat,
+                    "longitude": lon
+                }
+            )
+
+
+        with open(output_csv, "w", newline="") as f:
+
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "filename",
+                    "latitude",
+                    "longitude"
+                ]
+            )
+
+            writer.writeheader()
+            writer.writerows(rows)
+
+
+        print(
+            f"Saved {len(rows)} images to {output_csv}"
+        )
+
+
+class DJImetadata(CustomMetadataReader):
     """Reads EXIF + XMP metadata for DJI Enterprise drones (Mavic 3E, P4 RTK, etc.)."""
 
     def read(self, path: Path | str) -> PhotoMeta | None:
@@ -213,8 +407,6 @@ class DJImetadata(Basemetadata):
             return float(value)
         except ValueError:
             return None
-
-
 
 
 class TrinityMetadata():

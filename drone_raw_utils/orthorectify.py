@@ -14,6 +14,9 @@ import numpy as np
 from osgeo import gdal, osr
 from PIL import Image
 
+from .PhotoMeta import PhotoMeta
+
+
 from .dsm import DSM
 from .geometry import (
     camera_boresight_enu,
@@ -22,7 +25,6 @@ from .geometry import (
     geotiff_affine,
     intersect_boresight_with_dsm,
 )
-from .MetadataReader import PhotoMeta, BaseMetadataReader
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +46,8 @@ def _auto_buffer_radius(footprint_w_m: float, footprint_h_m: float) -> float:
 
 
 def _project_one(meta: PhotoMeta, dsm: DSM, buffer_radius_m: float | None) -> dict | None:
+
+    # expecting picth = -90 and roll = 0 for nadir images, but allow some tolerance
     """Run the planar projection for one Raw drone photo. Returns a record dict, or None to skip."""
     name = meta.path.name
 
@@ -168,9 +172,7 @@ def _write_geotiff(meta: PhotoMeta, x0: float, y0: float, gsd_m: float, crs, out
         cog_options = [
             "COMPRESS=DEFLATE",
             "BIGTIFF=IF_SAFER",
-            "TILED=YES",               # Crucial for COG layout optimization
-            "BLOCKXSIZE=512",          # Standard web-optimized block width
-            "BLOCKYSIZE=512",          # Standard web-optimized block height
+            "BLOCKSIZE=512",          # Standard web-optimized block width
             "PREDICTOR=2",             # Optimizes compression ratio for continuous/RGB values
             "NUM_THREADS=ALL_CPUS"     # Spreads compression load across all available cores
         ]
@@ -191,8 +193,8 @@ def orthorectify_image(
     image_path,
     dsm_path,
     geotiff_path,
+    metadata_reader,
     buffer_radius_m: float | None = None,
-    metadata_reader=BaseMetadataReader,
 ) -> Path:
     """Orthorectify a single Raw drone image onto a DSM and write a GeoTIFF.
 

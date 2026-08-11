@@ -44,20 +44,10 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
 )
 
-from .drone_raw_utils.MetadataReader import BaseMetadataReader, DJIMetadataReader, PhaseOneMetadataReader
+from .drone_raw_utils.find_drone_image import get_metadata_reader
+
 
 log = logging.getLogger(__name__)
-
-# Registry matching the QComboBox UI selections
-READER_REGISTRY: dict[str, BaseMetadataReader] = {
-    "Phase One": PhaseOneMetadataReader(),
-    "DJI Mavic 3 Enterprise": DJIMetadataReader(),
-}
-
-
-def get_metadata_reader(drone_model_name: str) -> BaseMetadataReader:
-    """Returns the matching metadata reader, defaulting to Phase One if unmapped."""
-    return READER_REGISTRY.get(drone_model_name, PhaseOneMetadataReader())
 
 
 # ── Worker thread ─────────────────────────────────────────────────────────────
@@ -116,13 +106,11 @@ class AlignWorker(QThread):
                 print("Creating coordinates file... The first time this can take a couple of minutes")
                 csv_coordinate_path = reader.extract_gps_to_csv(image_folder=self.image_folder, output_csv=csv_coordinate_path)
 
-
             # Step 1 – find the best image
             self.progress.emit("Step 1/3 – Finding best Raw Drone image …")
             img_path = find_best_raw_drone_image(
                 csv_file=csv_coordinate_path,
                 image_folder=self.image_folder,
-                output_folder=tmp_dir,
                 target_x=self.target_x,
                 target_y=self.target_y,
                 epsg=self.epsg,
@@ -224,7 +212,7 @@ class RawDroneAlignDialog(QDialog):
         self._drone_model_combo = QComboBox()
         self._drone_model_combo.setEditable(True)  # Allows typing custom models
         self._drone_model_combo.addItems([
-            "DJI Mavic 3 Enterprise",
+            "DJI Mavic 3",
             "Trinity",
             "Phase One",
             "Custom / Other"
