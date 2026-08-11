@@ -99,8 +99,8 @@ def find_best_raw_drone_image(
     n_images=5,
     radius=20,
     metadata_reader=Basemetadata,
-) -> Path:
-    """Find the best Raw Drone Image for a target coordinate.
+) -> tuple[list, Path]: 
+    """Find candidate drone images and select the most nadir image.
 
     The selection process:
         1. Find closest images by GPS position.
@@ -146,7 +146,6 @@ def find_best_raw_drone_image(
     if best is None:
         raise RuntimeError("Could not determine nadir image")
 
-    image_path = image_folder / best["filename"]
 
-    return image_path
+    return candidates, best
 

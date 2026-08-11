@@ -41,6 +41,7 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
@@ -70,6 +71,7 @@ class AlignWorker(QThread):
         epsg: str,
         output_path: str,
         drone_model: str = "Phase One",
+        n_images: int = 1
     ):
         super().__init__()
         self.ortho_path = ortho_path
@@ -78,8 +80,9 @@ class AlignWorker(QThread):
         self.target_x = target_x
         self.target_y = target_y
         self.epsg = epsg
-        self.output_path = output_path
-        self.drone_model = drone_model
+        self.output_folder = output_path
+        self.drone_model = drone_model,
+        self.n_images = n_images
 
     def run(self):
         """Execute the three-step pipeline."""
@@ -89,7 +92,6 @@ class AlignWorker(QThread):
             from .drone_raw_utils.orthorectify import orthorectify_image
             from .drone_raw_utils.align_aux import align_to_ortho
 
-            tmp_dir = tempfile.mkdtemp(prefix="raw_drone_align_")
 
             
             # set the reader of the raw images metadata based on the drone/camera model
@@ -108,39 +110,70 @@ class AlignWorker(QThread):
 
             # Step 1 – find the best image
             self.progress.emit("Step 1/3 – Finding best Raw Drone image …")
-            img_path = find_best_raw_drone_image(
+            candidate_images, best_image = find_best_raw_drone_image(
                 csv_file=csv_coordinate_path,
                 image_folder=self.image_folder,
                 target_x=self.target_x,
                 target_y=self.target_y,
                 epsg=self.epsg,
                 metadata_reader=reader,
-            )
-            
-            img_name = os.path.splitext(os.path.basename(str(img_path)))[0]
-            print(f"Drone image {img_name}")
-
-            # Step 2 – orthoproject
-            self.progress.emit("Step 2/3 – Projecting image …")
-
-            geotiff_path = self.output_path.replace(".tif", "_temp.tif") #os.path.join(tmp_dir, img_name + ".tif")
-            orthorectify_image(
-                image_path=img_path,
-                dsm_path=self.dsm_path,
-                geotiff_path=geotiff_path,
-                metadata_reader=reader
+                n_images = 5 if self.n_images == 1 else self.n_images
             )
 
-            # Step 3 – align
-            self.progress.emit("Step 3/3 – Aligning to reference orthomosaic …")
-            align_to_ortho(
-                orthoprojected_path=geotiff_path,
-                ortho_path=self.ortho_path,
-                output_path=self.output_path,
-                crop_size=25,
-            )
+            orthoprojected_folder = os.path.join(self.output_folder,"orthoprojected")
 
-            self.finished.emit(self.output_path)
+            aligned_folder = os.path.join(self.output_folder,"aligned")
+
+            os.makedirs(orthoprojected_folder, exist_ok=True)
+            os.makedirs(aligned_folder, exist_ok=True)
+
+
+            # if only one image was wanted use only the best one
+            if self.n_images == 1:
+                candidate_images = [best_image]
+
+            # iterate over all the images, project and align
+            for candiate in candidate_images:
+                img_path = os.path.join(self.image_folder, candiate["filename"])
+                img_name = os.path.splitext(os.path.basename(str(img_path)))[0]
+
+                print(f"Drone image {img_name}")
+                try:
+                    # Step 2 – orthoproject
+                    self.progress.emit("Step 2/3 – Projecting image …")
+
+                    geotiff_path = os.path.join(orthoprojected_folder, img_name + "_orthoprojection.tif")
+                    orthorectify_image(
+                        image_path=img_path,
+                        dsm_path=self.dsm_path,
+                        geotiff_path=geotiff_path,
+                        metadata_reader=reader
+                    )
+
+                except Exception as e:
+                    self.failed.emit(f"Failed to orthoproject image {img_path}: {e}")
+                    continue
+
+                if not os.path.exists(geotiff_path):
+                    self.failed.emit(f"Orthoprojection was not created for {img_path}")
+                    continue
+
+                try:        
+                    # Step 3 – align
+                    output_path = os.path.join(aligned_folder, img_name + "_aligned.tif")
+
+                    self.progress.emit("Step 3/3 – Aligning to reference orthomosaic …")
+                    align_to_ortho(
+                        orthoprojected_path=geotiff_path,
+                        ortho_path=self.ortho_path,
+                        output_path=output_path,
+                        crop_size=25,
+                    )
+
+                    self.finished.emit(output_path)
+                except Exception as e:
+                    self.failed.emit(f"Failed to align image {geotiff_path}. Image might be too different from orthomosaic, output is the orthoprojection: {e}")
+                    self.finished.emit(geotiff_path)
 
         except Exception:  # noqa: BLE001
             self.failed.emit(traceback.format_exc())
@@ -250,16 +283,31 @@ class RawDroneAlignDialog(QDialog):
         point_layout.addWidget(self._pick_btn)
         root.addWidget(point_group)
 
-        # ── Output ────────────────────────────────────────────────────
+        # ── Output folder ─────────────────────────────────────────────
         out_group = QGroupBox("Output")
-        out_layout = QHBoxLayout(out_group)
+        out_layout = QVBoxLayout(out_group)
+        folder_layout = QHBoxLayout()
         self._out_edit = QLineEdit()
-        self._out_edit.setPlaceholderText("Output aligned GeoTIFF path …")
+        self._out_edit.setPlaceholderText("Select output folder …")
         out_browse = QPushButton("Browse …")
         out_browse.clicked.connect(self._browse_output)
-        #out_layout.addWidget(self._out_edit)
-        #out_layout.addWidget(out_browse)
-        #root.addWidget(out_group)
+        folder_layout.addWidget(self._out_edit)
+        folder_layout.addWidget(out_browse)
+        out_layout.addLayout(folder_layout)
+        root.addWidget(out_group)
+
+        # ── Number of images ─────────────────────────────────────────────
+        images_layout = QHBoxLayout()
+        images_label = QLabel("Number of images:")
+        self._n_images_spin = QSpinBox()
+        self._n_images_spin.setMinimum(1)
+        self._n_images_spin.setMaximum(100)
+        self._n_images_spin.setValue(1)  # default
+        images_layout.addWidget(images_label)
+        images_layout.addWidget(self._n_images_spin)
+        images_layout.addStretch()
+
+        out_layout.addLayout(images_layout)
 
         # ── Progress ──────────────────────────────────────────────────
         self._status_label = QLabel("Ready.")
@@ -289,19 +337,19 @@ class RawDroneAlignDialog(QDialog):
             folder = QFileDialog.getExistingDirectory(self, "Select Raw Drone Image Folder")
             if folder:
                 self._folder_edit.setText(folder)
+                self._out_edit.setText(str(self._folder_edit.text()))
+
+
 
     def get_drone_model(self) -> str:
         """Helper to retrieve the selected or typed drone model."""
         return self._drone_model_combo.currentText().strip()
 
     def _browse_output(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save aligned GeoTIFF", "", "GeoTIFF (*.tif *.tiff);;All files (*)"
-        )
-        if path:
-            if not path.lower().endswith((".tif", ".tiff")):
-                path += ".tif"
-            self._out_edit.setText(path)
+        folder = QFileDialog.getExistingDirectory(self._out_edit, "Select Output Folder")
+        if folder:
+            self._out_edit.setText(folder)
+
 
     # ------------------------------------------------------------------
     # Point picker
@@ -356,8 +404,8 @@ class RawDroneAlignDialog(QDialog):
                 float(self._y_edit.text())
             except ValueError:
                 errors.append("• X and Y coordinates must be numeric.")
-        #if not self._out_edit.text().strip():
-        #    errors.append("• Specify an output path for the aligned GeoTIFF.")
+        if not self._out_edit.text().strip():
+            errors.append("• Specify an output folder for the aligned GeoTIFF.")
 
         if errors:
             QMessageBox.warning(
@@ -388,8 +436,9 @@ class RawDroneAlignDialog(QDialog):
             target_x=float(self._x_edit.text()),
             target_y=float(self._y_edit.text()),
             epsg=epsg,
-            output_path=r"/home/paula/Documentos/overlay_drone/Aligned/test.cog.tif",#self._out_edit.text().strip(),
+            output_path=self._out_edit.text().strip(),
             drone_model=self.get_drone_model(),
+            n_images = self._n_images_spin.value()
         )
 
         # UI feedback
