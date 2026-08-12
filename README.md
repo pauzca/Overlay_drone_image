@@ -1,6 +1,6 @@
 # Align Raw Drone Images — QGIS Plugin
 
-Orthorectify and align raw drone images to a reference orthomosaic and DSM directly inside QGIS.
+Orthoproject and align raw drone images to a reference orthomosaic and DSM directly inside QGIS.
 
 ---
 
@@ -32,27 +32,29 @@ overlay_raw_drone_image/       ← Plugin root (install this whole folder in the
    - Windows: `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\`
 
 2. **Install Python dependencies** (in the OSGeo4W shell or QGIS Python console):
+    ( i modified this so that the dependencies will be installe automatically but in case it doesn't work they can be installed manually in the QGIS python console)
    ```
    pip install geopandas pillow numpy scipy pyproj scikit-image opencv-python-headless affine shapely
    ```
 
-3. In QGIS, go to **Plugins → Manage and Install Plugins**, find **Overlay Raw Drone Image**, and enable it.
+4. In QGIS, go to **Plugins → Manage and Install Plugins**, find **Overlay Raw Drone Image**, and enable it.
 
 ---
 
 ## Usage
 
 1. Load your reference **Orthomosaic** and **DSM** rasters into QGIS.
-2. Click the **PhaseOne Image Align** toolbar button (or use the Plugins menu).
-3. In the dialog:
+2. Click the **Overlay Drone Image** toolbar button (or use the Plugins menu).
+3. In the window docked to the left:
    - Select the **Reference Orthomosaic** and **Reference DSM** layers.
-   - Browse to the **Phase One image folder** containing the raw JPEGs.
+   - Browse to the **Image folder** containing the raw JPEGs.
+   - Select the drone being used: DJI Mavic 3, Trinity + sony camera, Trinity + phase one camera
    - Click **"Pick point on map"** and click the target location in the canvas to set `target_x` / `target_y`, or type them manually.
-   - Set the **output GeoTIFF path** for the aligned image.
+   - Set the **Output path** for the projected and aligned images, the projected can be deleted later.
+   - You can modify the other parameters or leave default
+     
 4. Click **Run**.
 5. The aligned raster is automatically added to the QGIS Layers panel.
-
-> **Note**: Intermediate files (copied JPEG, orthorectified GeoTIFF) are written to a temporary folder and are not saved permanently.
 
 ---
 
@@ -88,7 +90,7 @@ overlay_raw_drone_image/       ← Plugin root (install this whole folder in the
 
 | Problem | Solution |
 |---------|---------|
-| "No Phase One images found near target coordinate" | Increase the search radius in `find_phaseone.py` (`radius` param), or check that the target point CRS matches the DSM CRS. |
-| "Missing Phase One metadata" | Ensure images contain valid XMP (`Yaw`, `Pitch`, `Roll`, `GPSLatitude`, `GPSLongitude`, `GPSAltitude`, `DIST_F`). |
-| Affine scale error (>10%) | SIFT found poor matches; try adjusting `crop_size` in the dialog or add more texture to the target area. |
-| Layer not loading | Open the output GeoTIFF manually via **Layer → Add Raster Layer**. |
+| "No images found near target coordinate" | Increase the search radius in `find_phaseone.py` (`radius` param), or check that the target point CRS matches the DSM CRS. |
+| "Missing metadata" | Ensure you picked the right drone model, or modify the plugin to read the images contain valid XMP (`Yaw`, `Pitch`, `Roll`, `GPSLatitude`, `GPSLongitude`, `GPSAltitude`, `DIST_F`). |
+| Could not align image: the orthoprojected image will get loaded, but the problem is likely due to a big difference between the orthomosaic and the raw images, try to find an orthomosaic with the closes date possible to the raw images |
+
