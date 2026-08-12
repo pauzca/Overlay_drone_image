@@ -11,7 +11,9 @@ from qgis.PyQt.QtGui import QAction, QIcon
 
 from .drone_raw_utils.installer import ensure_plugin_dependencies
 
-from .dialog import RawDroneAlignDialog
+from .dialog import RawDroneAlignDockWidget
+
+from qgis.PyQt.QtCore import Qt
 
 
 class RawDroneImageAlignPlugin:
@@ -65,6 +67,7 @@ class RawDroneImageAlignPlugin:
             "Raw Drone Image Align",
             self.iface.mainWindow(),
         )
+
         self._action.setToolTip("Align a Raw Drone image to the reference orthomosaic")
         self._action.triggered.connect(self._open_dialog)
 
@@ -84,10 +87,18 @@ class RawDroneImageAlignPlugin:
     # Internal helpers
     # ------------------------------------------------------------------
 
+
     def _open_dialog(self):
-        """Show the alignment dialog (create it on first call)."""
+        """Show the alignment dock widget."""
+
         if self._dialog is None:
-            self._dialog = RawDroneAlignDialog(self.iface)
+            self._dialog = RawDroneAlignDockWidget(self.iface)
+
+            # Add the widget to QGIS's right dock area
+            self.iface.addDockWidget(
+                Qt.DockWidgetArea.RightDockWidgetArea,
+                self._dialog,
+            )
+
         self._dialog.show()
         self._dialog.raise_()
-        self._dialog.activateWindow()

@@ -135,7 +135,7 @@ def find_best_raw_drone_image(
     candidates = _find_closest_images(
         tree, df, target_x, target_y, n_images, radius
     )
-
+    print(candidates)
     if not candidates:
         raise RuntimeError("No images found near target coordinate")
 
@@ -143,6 +143,7 @@ def find_best_raw_drone_image(
         candidates, image_folder, metadata_reader
     )
 
+    print(best)
     if best is None:
         raise RuntimeError("Could not determine nadir image")
 

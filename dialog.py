@@ -30,8 +30,8 @@ from qgis.PyQt.QtCore import Qt, QThread, pyqtSignal
 
 from qgis.PyQt.QtWidgets import (
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
+    QDockWidget,
+    QWidget,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -71,7 +71,9 @@ class AlignWorker(QThread):
         epsg: str,
         output_path: str,
         drone_model: str = "Phase One",
-        n_images: int = 1
+        n_images: int = 1,
+        distance_center: int = 20,
+        size_crop: int = 25
     ):
         super().__init__()
         self.ortho_path = ortho_path
@@ -81,8 +83,10 @@ class AlignWorker(QThread):
         self.target_y = target_y
         self.epsg = epsg
         self.output_folder = output_path
-        self.drone_model = drone_model,
+        self.drone_model = drone_model
         self.n_images = n_images
+        self.distance_center = distance_center
+        self.size_crop = size_crop
 
     def run(self):
         """Execute the three-step pipeline."""
@@ -117,6 +121,7 @@ class AlignWorker(QThread):
                 target_y=self.target_y,
                 epsg=self.epsg,
                 metadata_reader=reader,
+                radius = self.distance_center,
                 n_images = 5 if self.n_images == 1 else self.n_images
             )
 
@@ -167,7 +172,7 @@ class AlignWorker(QThread):
                         orthoprojected_path=geotiff_path,
                         ortho_path=self.ortho_path,
                         output_path=output_path,
-                        crop_size=25,
+                        crop_size=self.size_crop,
                     )
 
                     self.finished.emit(output_path)
@@ -182,11 +187,12 @@ class AlignWorker(QThread):
 # ── Dialog ────────────────────────────────────────────────────────────────────
 
 
-class RawDroneAlignDialog(QDialog):
-    """Main user interface for the Raw Drone Image Align plugin."""
+class RawDroneAlignDockWidget(QDockWidget):
+    """Dockable interface for the Raw Drone Image Align plugin."""
 
     def __init__(self, iface, parent=None):
-        super().__init__(parent or iface.mainWindow())
+        super().__init__("Raw Image Align", parent or iface.mainWindow())
+
         self.iface = iface
         self._target_x: float | None = None
         self._target_y: float | None = None
@@ -194,8 +200,23 @@ class RawDroneAlignDialog(QDialog):
         self._previous_tool = None
         self._worker: AlignWorker | None = None
 
-        self.setWindowTitle("Raw Image Align")
-        self.setMinimumWidth(520)
+        self._content = QWidget()
+
+        self.setWidget(self._content)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        self._content.setAutoFillBackground(True)
+        
+        # Allow docking on either side of QGIS
+        self.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+
+        # The QDockWidget needs a child QWidget to contain the UI.
+        self._content = QWidget()
+        self.setWidget(self._content)
+
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -203,7 +224,7 @@ class RawDroneAlignDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(self._content)
 
         # ── Input layers ──────────────────────────────────────────────
         layer_group = QGroupBox("Reference Layers")
@@ -296,18 +317,46 @@ class RawDroneAlignDialog(QDialog):
         out_layout.addLayout(folder_layout)
         root.addWidget(out_group)
 
-        # ── Number of images ─────────────────────────────────────────────
-        images_layout = QHBoxLayout()
-        images_label = QLabel("Number of images:")
-        self._n_images_spin = QSpinBox()
-        self._n_images_spin.setMinimum(1)
-        self._n_images_spin.setMaximum(100)
-        self._n_images_spin.setValue(1)  # default
-        images_layout.addWidget(images_label)
-        images_layout.addWidget(self._n_images_spin)
-        images_layout.addStretch()
+        # ── Processing parameters ─────────────────────────────────────
+        params_group = QGroupBox("Processing Parameters")
+        params_layout = QFormLayout(params_group)
 
-        out_layout.addLayout(images_layout)
+        # Number of images
+        self._n_images_spin = QSpinBox()
+        self._n_images_spin.setRange(1, 100)
+        self._n_images_spin.setValue(1)
+        self._n_images_spin.setToolTip("Number of nearby drone images to process.")
+        params_layout.addRow("Number of images:",self._n_images_spin,)
+
+        # Maximum distance from image center to target point
+        self._radius_spin = QSpinBox()
+        self._radius_spin.setRange(1, 10000)
+        self._radius_spin.setValue(20)
+        self._radius_spin.setSuffix(" m")
+        self._radius_spin.setToolTip(
+            "Maximum distance in meters between the target point "
+            "and the drone image center."
+        )
+        params_layout.addRow(
+            "Closest image center distance:",
+            self._radius_spin,
+        )
+
+        # Alignment crop size
+        self._crop_size_spin = QSpinBox()
+        self._crop_size_spin.setRange(1, 10000)
+        self._crop_size_spin.setValue(25)
+        self._crop_size_spin.setSuffix(" m")
+        self._crop_size_spin.setToolTip(
+            "Crop size used when aligning the drone image "
+            "to the reference orthomosaic."
+        )
+        params_layout.addRow(
+            "Alignment crop size:",
+            self._crop_size_spin,
+        )
+
+        root.addWidget(params_group)
 
         # ── Progress ──────────────────────────────────────────────────
         self._status_label = QLabel("Ready.")
@@ -320,12 +369,9 @@ class RawDroneAlignDialog(QDialog):
         root.addWidget(self._progress)
 
         # ── Buttons ───────────────────────────────────────────────────
-        btn_box = QDialogButtonBox()
-        self._run_btn = btn_box.addButton("Run", QDialogButtonBox.ButtonRole.AcceptRole)
+        self._run_btn = QPushButton("Run")
         self._run_btn.clicked.connect(self._run)
-        close_btn = btn_box.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
-        close_btn.clicked.connect(self.close)
-        root.addWidget(btn_box)
+        root.addWidget(self._run_btn)
 
     # ------------------------------------------------------------------
     # Browse helpers
@@ -428,6 +474,7 @@ class RawDroneAlignDialog(QDialog):
         dsm_layer = self._dsm_combo.currentLayer()
         epsg = dsm_layer.crs().authid()  # e.g. "EPSG:32617"
 
+        print(self._radius_spin.value(),self._crop_size_spin.value())
 
         params = dict(
             ortho_path=self._ortho_combo.currentLayer().source(),
@@ -438,7 +485,9 @@ class RawDroneAlignDialog(QDialog):
             epsg=epsg,
             output_path=self._out_edit.text().strip(),
             drone_model=self.get_drone_model(),
-            n_images = self._n_images_spin.value()
+            n_images = self._n_images_spin.value(),
+            distance_center = int(self._radius_spin.value()),
+            size_crop = int(self._crop_size_spin.value())
         )
 
         # UI feedback

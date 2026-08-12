@@ -217,7 +217,7 @@ class DJImetadata(Basemetadata):
 
 
 
-class TrinityMetadata():
+class TrinityMetadata(Basemetadata):
     """Read Trinity/Sony metadata without QGIS or ExifTool."""
 
     SENSOR_WIDTH_MM = 35.9
