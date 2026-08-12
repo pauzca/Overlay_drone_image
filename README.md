@@ -1,4 +1,4 @@
-# Align Raw Drone Images — QGIS Plugin
+# Overlay Raw Drone Images — QGIS Plugin
 
 Orthoproject and align raw drone images to a reference orthomosaic and DSM directly inside QGIS.
 
