@@ -323,8 +323,15 @@ def align_to_ortho(
 
     out_transform = (T_new.c,T_new.a,T_new.b,T_new.f,T_new.d,T_new.e,)
 
-    create_cog_directly_from_memory(src=src, output_path=output_path, 
-                                    transform=out_transform, projection=src.GetProjection())
+    #create_cog_directly_from_memory(src=src, output_path=output_path, transform=out_transform, projection=src.GetProjection())
+
+    
+    save_aligned_normal(
+    src=src,
+    output_path=output_path,
+    transform=out_transform,
+    projection=src.GetProjection(),
+    )
 
     src = None
 
@@ -339,6 +346,54 @@ def align_to_ortho(
         "scale": scale,
     }
 
+
+def save_aligned_normal(src, output_path, transform, projection):
+    """
+    Save a GDAL dataset as a tiled, JPEG-compressed GeoTIFF
+    with an updated geotransform, optimized for fast visualization.
+    """
+
+    driver = gdal.GetDriverByName("GTiff")
+
+    options = [
+        "COMPRESS=JPEG",
+        "JPEG_QUALITY=90",
+        "PHOTOMETRIC=YCBCR",
+        "TILED=YES",
+        "BLOCKXSIZE=512",
+        "BLOCKYSIZE=512",
+        "BIGTIFF=IF_SAFER",
+        "NUM_THREADS=ALL_CPUS",
+    ]
+
+    out_ds = driver.CreateCopy(
+        str(output_path),
+        src,
+        options=options,
+    )
+
+    if out_ds is None:
+        raise RuntimeError(
+            f"GDAL failed to create {output_path}"
+        )
+
+    try:
+        # Update georeferencing
+        out_ds.SetGeoTransform(transform)
+        out_ds.SetProjection(projection)
+
+        out_ds.FlushCache()
+
+        # Build internal pyramids for fast visualization
+        out_ds.BuildOverviews(
+            "AVERAGE",
+            [2, 4, 8, 16, 32, 64],
+        )
+
+        out_ds.FlushCache()
+
+    finally:
+        out_ds = None
 
 import os
 

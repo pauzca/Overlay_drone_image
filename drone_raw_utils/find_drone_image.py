@@ -147,6 +147,8 @@ def find_best_raw_drone_image(
     if best is None:
         raise RuntimeError("Could not determine nadir image")
 
+    # the best one is the closes for now
+    best = candidates[0]
 
     return candidates, best
 

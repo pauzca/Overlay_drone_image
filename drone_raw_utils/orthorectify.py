@@ -146,6 +146,74 @@ def _write_geotiff(meta: PhotoMeta, x0: float, y0: float, gsd_m: float, crs, out
         # Fallback to string representation if it's a rasterio/pyproj CRS object
         srs.ImportFromUserString(str(crs))
     
+    #save_cog(meta, mem_ds, out_path, gdal_transform, srs, bands)
+    save_normal(gdal_transform, out_path, srs, bands)
+
+
+def save_normal(gdal_transform, out_path, srs, bands):
+    """
+    Save RGB imagery as a tiled, JPEG-compressed GeoTIFF
+    optimized for fast visualization.
+
+    Parameters
+    ----------
+    gdal_transform : tuple
+        GDAL 6-element geotransform.
+    out_path : Path or str
+        Output GeoTIFF path.
+    srs : osgeo.osr.SpatialReference
+        Spatial reference of the output raster.
+    bands : np.ndarray
+        RGB array with shape (3, height, width).
+    """
+
+    # Get dimensions directly from the array
+    n_bands, height, width = bands.shape
+
+    # Regular GeoTIFF driver
+    driver = gdal.GetDriverByName("GTiff")
+
+    # Optimized for visualization of RGB aerial imagery
+    options = [
+        "COMPRESS=JPEG",
+        "JPEG_QUALITY=90",
+        "PHOTOMETRIC=YCBCR",
+        "TILED=YES",
+        "BLOCKXSIZE=512",
+        "BLOCKYSIZE=512",
+        "BIGTIFF=IF_SAFER",
+        "NUM_THREADS=ALL_CPUS",
+    ]
+
+    # Create output raster
+    out_ds = driver.Create(str(out_path),width,height,3,gdal.GDT_Byte,options=options,)
+
+    if out_ds is None:
+        raise RuntimeError(f"GDAL failed to create {out_path}")
+
+    try:
+        # Georeferencing
+        out_ds.SetGeoTransform(gdal_transform)
+        out_ds.SetProjection(srs.ExportToWkt())
+
+        # Write RGB bands
+        for i in range(3):
+            out_ds.GetRasterBand(i + 1).WriteArray(bands[i])
+
+        # Make sure full-resolution data is written
+        out_ds.FlushCache()
+
+        # Build internal pyramids/overviews for fast visualization
+        out_ds.BuildOverviews("AVERAGE",[2, 4, 8, 16, 32, 64],)
+        out_ds.FlushCache()
+
+    finally:
+        # Close and flush the GDAL dataset
+        out_ds = None
+
+
+
+def save_cog(meta, mem_ds, out_path, gdal_transform, srs, bands):
     # 3. Create a temporary in-memory dataset to hold the initial raw raster
     mem_driver = gdal.GetDriverByName("MEM")
     mem_ds = mem_driver.Create(
@@ -155,8 +223,8 @@ def _write_geotiff(meta: PhotoMeta, x0: float, y0: float, gsd_m: float, crs, out
         3,   # Number of bands
         gdal.GDT_Byte
     )
-    
     try:
+        # save COG
         mem_ds.SetGeoTransform(gdal_transform)
         mem_ds.SetProjection(srs.ExportToWkt())
         
