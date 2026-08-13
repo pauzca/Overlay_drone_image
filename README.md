@@ -2,6 +2,8 @@
 
 Orthoproject and align raw drone images to a reference orthomosaic and DSM directly inside QGIS.
 
+Part of the code is taken or modified from: https://github.com/traitlab/closeup-ortho 
+
 ---
 
 ## Folder Structure
