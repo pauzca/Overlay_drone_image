@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Uzcategui-Leon"
+    given-names: "Paula"
+    orcid: "https://orcid.org/0009-0003-4565-8236"
+    affiliation: "Smithsonian Tropical Research Institute"
+  - family-names: "Borges Goncalves"
+    given-names: "Nathan"
+    affiliation: "Smithsonian Tropical Research Institute"
+  - family-names: "Muller-Landau"
+    given-names: "Helene"
+    affiliation: "Smithsonian Tropical Research Institute"
+  - family-names: "Laliberté"
+    given-names: "Etienne"
+    affiliation: "Université de Montréal"
+  - family-names: "Gora"
+    given-names: "Evan"
+    affiliation: "Cary Institute of Ecosystem Studies, Smithsonian Tropical Research Institute"
+title: "Overlay Raw Drone Images — QGIS Plugin"
+version: 1.0.0
+date-released: 2026-09-10
+url: "https://github.com/pauzca/Overlay_drone_image"
+license: MIT
