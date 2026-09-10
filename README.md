@@ -4,6 +4,15 @@ Orthoproject and align raw drone images to a reference orthomosaic and DSM direc
 
 Part of the code is taken or modified from: https://github.com/traitlab/closeup-ortho 
 
+**DEMO:**
+
+Demo using the plugin to view a very high resolution image over an orthomosaic with lower resolution taken on the same date. 
+
+<img width="800" height="450" alt="ezgif com-video-to-gif-converter" src="https://github.com/user-attachments/assets/54267963-c99d-4c2a-bb53-90b20acbeaba" />
+
+
+
+
 ---
 
 ## Folder Structure
