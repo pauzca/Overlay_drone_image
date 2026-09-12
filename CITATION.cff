@@ -11,6 +11,12 @@ authors:
   - family-names: "Laliberté"
     given-names: "Etienne"
     affiliation: "Université de Montréal"
+  - family-names: "Muller-Landau"
+    given-names: "Helene"
+    affiliation: "Smithsonian Tropical Research Institute"
+  - family-names: "Gora"
+    given-names: "Evan"
+    affiliation: "Cary Institute of Ecosystem Studies, Smithsonian Tropical Research Institute"
 title: "Overlay Raw Drone Images — QGIS Plugin"
 version: 1.0.0
 date-released: 2026-09-10
