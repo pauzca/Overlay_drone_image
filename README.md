@@ -102,9 +102,3 @@ overlay_raw_drone_image/       ← Plugin root (install this whole folder in the
 | "No images found near target coordinate" | Increase the search radius in `find_phaseone.py` (`radius` param), or check that the target point CRS matches the DSM CRS. |
 | "Missing metadata" | Ensure you picked the right drone model, or modify the plugin to read the images contain valid XMP (`Yaw`, `Pitch`, `Roll`, `GPSLatitude`, `GPSLongitude`, `GPSAltitude`, `DIST_F`). |
 | Could not align image: the orthoprojected image will get loaded, but the problem is likely due to a big difference between the orthomosaic and the raw images, try to find an orthomosaic with the closes date possible to the raw images |
-
-## Acknowledgments
-
-This plugin was developed by me Paula Uzcátegui León during my internship at the Smithsonian Tropical Research Institute (STRI), based on an original idea by Nathan Borges Goncalves and code developed by Etienne Laliberté.
-
-Development and testing benefited from UAV imagery provided by Evan Gora and discussions and support from Helene Muller-Landau.
