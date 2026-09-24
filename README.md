@@ -110,3 +110,9 @@ We gratefully acknowledge Étienne Laliberté, who provided the initial code for
 
 We also gratefully acknowledge the financial support of Simons Foundation award 429440, which supported PU and NG, and NSF award DEB-2241507.
 
+
+## How to cite this
+
+If you use this plugin in your work, please cite the Zenodo release using the DOI: https://doi.org/10.5281/zenodo.22943816
+
+I’d also love to hear how the plugin is being used! Feel free to get in touch by email.
